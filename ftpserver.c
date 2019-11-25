@@ -14,16 +14,17 @@
 #include <netinet/in.h>
 #include <netdb.h>
 #include <signal.h>
+#include <dirent.h>
 
 typedef enum { FALSE, TRUE } bool;   // bool type for C89/C99 compilation
 //typedef enum { SEND,  RECV } mode_t; // mode_t type to specify sendrecv() mode
 
-#define SM_BUF 128
-#define LG_BUF 4096
-#define OK "OK"
-#define BAD_CMD "BAD COMMAND"
-//#define BAD_PORT "BAD PORT"
-#define FNF "FILE NOT FOUND"
+#define BUF_LEN 128
+//#define LG_BUF 4096
+#define CMD_OK  "OK"
+#define BAD_CMD "INVALID COMMAND"
+#define BAD_DIR "ERROR READING DIRECTORY"
+#define BAD_FIL "FILE NOT FOUND"
 
 /*
  * Declarations
@@ -34,8 +35,8 @@ void handleRequest(int ctrlConn, char* host);
 int getDir(char* buf);
 int getFile(char* buf, char *name);
 int sendAll(int conn, char* str, int len);
-void* get_in_addr(struct sockaddr *client);
-static void bye(int signum);
+void* getInAddr(struct sockaddr *client);
+void bye(int signum);
 
 /*
  * Main
@@ -85,11 +86,11 @@ int main(int argc, char *argv[]) {
         printf("Client connection established!\n");
 
         // get the client host
-        inet_ntop(client.ss_family, get_in_addr((struct sockaddr*)&client),
-                clientHost, sizeof(clientHost);
+        inet_ntop(client.ss_family, getInAddr((struct sockaddr*)&client),
+                clientHost, sizeof(clientHost));
 
         handleRequest(conn, clientHost);
-        conn.close();
+        close(conn);
         printf("Client connection closed.\n");
     }
 
@@ -129,11 +130,13 @@ int ctrlListen(char *port) {
 
     // loop through all possible connections and try to set socket options and bind.
     for (ptr = serv; ptr != NULL; ptr = ptr->ai_next) {
+        
         if ((sock = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol)) >= 0) { // socket found
+            
             if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
                 perror("ERROR, setting socket options\n"); exit(1); // critical error setting options
             }
-            else if (bind(sock, p->ai_addr, p-ai_addrlen) == -1) {
+            else if (bind(sock, ptr->ai_addr, ptr->ai_addrlen) == -1) {
                 close(sock); // if bind unsuccessful be sure to close socket.
             }
             else { break; } // setting socket options and binding successful - exit loop.
@@ -141,11 +144,13 @@ int ctrlListen(char *port) {
     }
     freeaddrinfo(serv); // not needed anymore
 
+    // If pointer looped to the end then binding was unsuccessful
     if (ptr == NULL) {
         fprintf(stderr, "ERROR, failed to bind socket on port: %s\n", port);
         exit(1);
     }
 
+    // Try to start listening
     if (listen(sock, 1) == -1) {
         fprintf(stderr, "ERROR, listening on port: %s\n", port);
         exit(1);
@@ -182,16 +187,18 @@ int dataConnect(char *host, char *port) {
 
     // loop through all possible connections and try to connect
     for (ptr = serv; ptr != NULL; ptr = ptr->ai_next) {
+        
         if ((sock = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol)) >= 0) {
+            
             if (connect(sock, ptr->ai_addr, ptr->ai_addrlen) == -1) {
                 close(sock); // make sure to close connection if connect resulted in err
             }
-            else {
-                break; // connection successful, exit loop
-            }
+            else { break; } // connection successful, exit loop
         }
     }
+    freeaddrinfo(serv); // not needed anymore
 
+    // If pointer looped to the end then connecting was unsuccessful
     if (ptr == NULL) {
         fprintf(stderr, "ERROR, failed to connect to host: %s on port: %s\n", host, port);
         return -1;
@@ -202,7 +209,8 @@ int dataConnect(char *host, char *port) {
 
 // Name: handleRequest()
 // Desc:
-// Arg :
+// Arg1:
+// Arg2:
 // Pre :
 // Post:
 void handleRequest(int ctrlConn, char* host) {
@@ -212,11 +220,11 @@ void handleRequest(int ctrlConn, char* host) {
     struct sockaddr_storage client;
     socklen_t clientSize;
 
-    char cmd[SM_BUF];  // to hold the full command from the client
-    char name[SM_BUF]; // to hold a filename
-    int lenInt;        // to hold the buffer length as an integer
-    char lenStr[5];    // max buf size is 4096 = 4 digits + 1 null terminator
-    char buf[LG_BUF];  // hold dir or file contents 
+    char cmd[BUF_LEN];  // to hold the full command from the client
+    char name[BUF_LEN]; // to hold a filename
+    char* msg;
+    char lenStr[BUF_LEN];
+    int len;
     char* token;
 
     // Get command
@@ -230,9 +238,15 @@ void handleRequest(int ctrlConn, char* host) {
     token = strtok(cmd, " ");
     if (strcmp(token, "-l") == 0) { // get directory contents command
 
-        // Get the directory contents
-        memset(buf, '\0', sizeof(buf));
-        getDir(buf);
+        // Try to get the directory contents
+        if ((len = getDir(msg)) == -1) {
+            
+            // error reading directory contents
+            if (send(ctrlConn, BAD_DIR, sizeof(BAD_DIR)-1, 0) <= 0) {
+                perror("ERROR, ERROR READING DIRECTORY error not sent to client\n");
+            }
+            return;
+        }
 
     } else if (strcmp(token, "-g") == 0) { // get file contents command
         
@@ -242,11 +256,10 @@ void handleRequest(int ctrlConn, char* host) {
         strcpy(name, token);
 
         // Try to get the file contents
-        memset(buf, '\0', sizeof(buf));
-        if (getFile(buf, name) == -1) {
+        if ((len = getFile(msg, name)) == -1) {
 
             // could not find file to open
-            if (send(ctrlConn, FNF, sizeof(FNF)-1, 0) <= 0) {
+            if (send(ctrlConn, BAD_FIL, sizeof(BAD_FIL)-1, 0) <= 0) {
                 perror("ERROR, FILE NOT FOUND error not sent to client\n");
             }
             return;
@@ -255,21 +268,20 @@ void handleRequest(int ctrlConn, char* host) {
         
     } else { // invalid command
         if (send(ctrlConn, BAD_CMD, sizeof(BAD_CMD)-1, 0) <= 0) { 
-            perror("ERROR, BAD COMMAND error not sent to client\n");
+            perror("ERROR, INVALID COMMAND error not sent to client\n");
         }
         return;
     }
 
     // command [and filename] good, send acknowledgment
-    if (send(ctrlConn, OK, sizeof(OK)-1, 0) <= 0) {
+    if (send(ctrlConn, CMD_OK, sizeof(CMD_OK)-1, 0) <= 0) {
         perror("ERROR, OK response not sent to client\n");
         return;
     }
 
-    // Get the length of the file contents (as a string and int)
-    lenInt = strlen(buf);
+    // Get the length of the message as a string
     memset(lenStr, '\0', sizeof(lenStr));
-    sprintf(lenStr, "%d", lenInt);
+    sprintf(lenStr, "%d", len);
 
     // Get the port number and open data connection with client host
     token = strtok(NULL, " ");
@@ -278,10 +290,10 @@ void handleRequest(int ctrlConn, char* host) {
     // Send buffer length and then buffer contents.
     if (send(dataConn, lenStr, sizeof(lenStr)-1, 0) <= 0) {
         perror("ERROR, could not send message length, aborting\n");
-        dataConn.close();
+        close(dataConn);
         return;
     }
-    if (sendAll(dataConn, buf, lenInt) < lenInt) { 
+    if (sendAll(dataConn, msg, len) < len) { 
         perror("WARNING, entire message not sent\n"); 
     }
 
@@ -293,12 +305,15 @@ void handleRequest(int ctrlConn, char* host) {
     }
     */
 
-    dataConn.close();
+    close(dataConn);
 }
 
 
 // Name: sendAll()
 // Desc: Handles the sending of a long message to the client.
+// Arg1:
+// Arg2:
+// Arg3:
 // Pre : A message is retrieved by server (either a directory or file contents).
 // Post: The entire message up to the provided length is sent to the client.
 // Rtrn: 0 if successful, or -1 if an error is encountered.
@@ -326,7 +341,8 @@ int sendAll(int conn, char *str, int len) {
 // Arg : 
 // Pre :
 // Post:
-void* get_in_addr(struct sockaddr* client) {
+// Rtrn:
+void* getInAddr(struct sockaddr* client) {
 
     // Getting IPv4 or IPv6 sockaddr rom Beej's guide 
     // in the section 'A Simple Stream Server'
@@ -337,3 +353,112 @@ void* get_in_addr(struct sockaddr* client) {
 
     return &(((struct sockaddr_in6*)client)->sin6_addr);
 }
+
+// Name: getDir()
+// Desc:
+// Arg :
+// Pre :
+// Post:
+// Rtrn:
+int getDir(char* buf) {
+
+    // Opening and ready directory contents from official manpage
+    // http://man7.org/linux/man-pages/man3/readdir.3.html
+    DIR* dir;
+    struct dirent* dirEnt;
+    int i = 0;
+    int count = 0;
+    int size = 0;
+    char* files[BUF_LEN];
+
+    if ((dir = opendir(".")) == NULL) { 
+        perror("ERROR, opening current directory");
+        return -1; 
+    }
+
+    // Loop through the directory and get the names of the regular files.
+    while ((dirEnt = readdir(dir)) != NULL) {
+        if (dirEnt->d_type == DT_REG) {
+            strcpy(files[count], dirEnt->d_name);
+            size += strlen(files[i]);
+            size++; // to account for the newlines
+            count++;
+        }
+    }
+    closedir(dir);
+
+    // If there were no regular files in the directory just put a blank space
+    if (size == 0) { buf = " "; return 1; }
+    else {
+        // Append all the file names as one long string
+        buf = malloc(sizeof(char) * (size+1)); 
+        
+        bool first = TRUE;
+        for (i = 0; i < count; i++) {
+            if (first) {
+                strcpy(buf, files[i]);
+                strcat(buf, "\n");
+                first = FALSE;
+            } else {
+                strcat(buf, files[i]);
+                strcat(buf, "\n");
+            }
+        }
+        buf[size+1] = '\0';
+    }
+
+    return size; // return size of concatenated string
+}
+
+// Name: getFile()
+// Desc:
+// Arg1:
+// Arg2:
+// Pre :
+// Post:
+// Rtrn:
+int getFile(char* buf, char *name) {
+
+    // Opening and reading files from official manpage
+    // http://man7.org/linux/man-pages/man3/fopen.3.html
+    // Using fseek and ftell to get the file size from official manpage
+    // http://man7.org/linux/man-pages/man3/fseek.3.html
+    FILE* file;
+    long size;
+
+    if ((file = fopen(name, "r")) == NULL) {
+        fprintf(stderr, "ERROR, could not open file %s\n", name);
+        return -1;
+    }
+
+    // Get size of file
+    if (fseek(file, 0, SEEK_END) != 0
+            || (size = ftell(file)) == -1
+            || fseek(file, 0, SEEK_SET) != 0) {
+        perror("ERROR, getting file size\n");
+        return -1;
+    }
+
+    // Get the file contents
+    buf = malloc(sizeof(char) * (size+1));
+    if (fread(buf, sizeof(char), size, file) < size || ferror(file)) {
+        perror("ERROR, reading file contents to buffer\n");
+        return -1;
+    } else {
+        buf[size+1] = '\0';
+    }
+
+    return size;
+}
+
+// Name: bye()
+// Desc: Signal handler to exit the program
+// Pre : CTRL + C is pressed / SIGINT signal is sent
+// Post: The program is exited
+void bye(int signum) {
+ 
+    printf(""); // flush
+    printf("\nftpserver is exiting... Goodbye!\n");
+    exit(0);
+}
+
