@@ -297,7 +297,7 @@ void handleRequest(int ctrlConn, char* host) {
         perror("WARNING, entire message not sent\n"); 
     }
 
-    /*
+    /* TODO: definitely implement this wait for receipt to handle large files!
     // Get acknowledgment of receipt from client before closing
     memset(cmd, '\0', sizeof(cmd));
     if (recv(dataCon, cmd, sizeof(cmd)-1, 0) <= 0) {
@@ -306,6 +306,7 @@ void handleRequest(int ctrlConn, char* host) {
     */
 
     close(dataConn);
+    free(msg);
 }
 
 

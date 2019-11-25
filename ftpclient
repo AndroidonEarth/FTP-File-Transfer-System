@@ -1,0 +1,223 @@
+#!/usr/bin/env python2
+
+##
+## Program name: ftpclient
+## Author: Andrew Swaim
+## Date: November 2019
+## Description: 
+##
+
+import sys
+import re
+from socket import *
+
+# Name: run()
+# Desc: The main function that starts the server.
+# Pre : chatserve application is run, specifying a port on the command line.
+# Post: chatserve server is running and listening for connections.
+def run():
+    
+    # Validate minimum args
+    if len(sys.argv) < 5 or len(sys.argv) > 6:
+        sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2")
+
+    # Capture first args
+    host = sys.argv[1]
+    ctrlPort = sys.argv[2]
+    flag = sys.argv[3]
+
+    # Capture and validate remaining args
+    filename = None
+    dataPort = None
+    if len(sys.argv) == 5:
+        if flag == '-l':
+            dataPort = sys.argv[4]
+        else:
+            sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2")
+    elif len(sys.argv) == 6:
+        if flag == '-g':
+            filename = sys.argv[4]
+            dataPort = sys.argv[5]
+        else:
+            sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2")
+
+    # Validate port numbers
+    if int(ctrlPort) < 1024 or int(ctrlPort) > 65535:
+        sys.exit("ERROR, invalid port: {}".format(ctrlPort))
+    if int(dataPort) < 1024 or int(dataPort) > 65535:
+        sys.exit("ERROR, invalid port: {}".format(dataPort))
+    if int(ctrlPort) < 50000 or int(dataPort) < 50000:
+        print("WARNING, recommended to use port numbers above 50000")
+
+    print("Welcome to ftpclient!")
+    # TODO: flesh out stubs
+    conn = initiateContact(host, port)
+    makeRequest()
+    receiveData()
+
+    # TODO: move to initiateContact()
+    print("Attempting to connect to host: {} at port: {}".format(host, ctrlPort))
+    ctrlConnect(host, ctrlPort)
+    print("Connection successful! Sending command...")
+
+    """
+    sock = setup()                    # setup the socket connection
+    
+    # a new connection is established
+    conn, addr = sock.accept()
+
+    # handshake with client to receive client's name 
+    client = conn.recv(10) # max 10 chars for username
+    conn.send(user)
+    print(client + " has joined the chatroom!")
+
+    chat(conn, user, client) # begin chat loop
+    """
+    conn.close()
+
+
+# Name: dataListen()
+# Desc: Sets up a TCP socket on the port num specified on the command line and begins listening.
+# Rtrn: The file descriptor for the opened and listening connection
+# Pre : A port number was specified on the command line when the application was started.
+# Post: a TCP socket is created on the specified port and begins listening.
+def dataListen(port):
+
+    # python socket programming info from official docs
+    # in section about python socket programming examples
+    # https://docs.python.org/2/library/socket.html#example
+    sock = None
+    for res in getaddrinfo(gethostname(), port, AF_UNSPEC, SOCK_STREAM, 0, AI_PASSIVE):
+        af, socktype, proto, canonname, sa = res
+        try:
+            sock = socket(af, socktype, proto)
+        except error as msg:
+            sock = None
+            continue
+        try:
+            sock.bind(sa)
+            sock.listen(1)
+        except error as msg:
+            sock.close()
+            sock = None
+            continue
+        break
+    if sock is None:
+        sys.exit("ERROR, could not open socket at port: {}".format(port))
+    return sock
+
+# Name: ctrlConnect()
+# Desc:
+# Arg :
+# Pre :
+# Post:
+# Rtrn:
+def ctrlConnect(host, port):
+
+    # python socket programming info from official docs
+    # in section about python socket programming examples
+    # https://docs.python.org/2/library/socket.html#example
+    sock = None
+    for res in getaddrinfo(host, port, AF_UNSPEC, SOCK_STREAM):
+        af, socktype, proto, canonname, sa = res
+        try:
+            sock = socket(af, socktype, proto)
+        except error as msg:
+            sock = None
+            continue
+        try:
+            sock.connect(sa)
+        except error as msg:
+            sock.close()
+            sock = None
+            continue
+        break
+    if sock is None:
+        sys.exit("ERROR, could not connect to host: {} at port: {}".format(host, port))
+    return sock
+
+"""
+# Name: getUser()
+# Desc: Prompts for and gets username, using regex matching for validation of format.
+# Pre : None.
+# Post: A correctly formatted and validated username is returned.
+def getUser():
+
+    # python regex info from official docs
+    # https://docs.python.org/2/library/re.html#module-contents
+    user = raw_input("Please enter a one word username, up to 10 characters: ")
+    regex = re.compile("^[A-Za-z]{1,10}$")
+    while not regex.match(user):
+        print("Invalid username format")
+        user = raw_input("Please enter a one word username, up to 10 characters: ")
+    return user
+
+
+# Name: chat()
+# Desc: The main chat loop where the user and client take turns sending messages
+#           back and forth with each other until the connection is terminated.
+# Arg1: conn - the connection that is established with the client when the socket accepted
+#           the connection.
+# Arg2: user - the username of the server user.
+# Arg3: client - the username of the client user.
+# Pre : A socket accepts a connection with a client and a handshake occurs
+#           to retrieve the client username.
+# Post: The client or server terminates the connection and the chat ends.
+def chat(conn, user, client):
+
+    bufLen = MSGLEN - len(user) - 2
+
+    while True:
+        try:
+            msg = conn.recv(MSGLEN)
+        except error as m:
+            print("ERROR: could not receive message from client... Exiting chatroom.")
+            break
+        if not msg or '\quit' in msg.strip().lower():
+            print(client + " has left the chatroom.")
+            break
+        else:
+            print msg
+
+        buf = (raw_input("{}> ".format(user)))[:bufLen]
+        msg = "{}> {}".format(user, buf)
+        
+        # even if quitting send the \quit message
+        try:
+            sent = sendMsg(conn, msg)
+        except error as m:
+            print("ERROR: could not sent message to client... Exiting chatoom.")
+            break
+        if buf.strip().lower() == '\quit':
+            print("You have left the chatroom.")
+            break
+"""
+
+# Name: recvAll()
+# Desc: Sends the specified message to the connection up to the global max message length.
+# Arg1: conn - the data connection to send data to.
+# Arg2: msg - the message to send.
+# Pre : A connection is previously set up and the message to send is obtained from the user.
+# Post: The message is sent to the client through the connection.
+def recvAll(conn, length):
+
+    # python socket programming info from official docs
+    # in section called 'Using a Socket'
+    # https://docs.python.org/2/howto/sockets.html#using-a-socket
+    total = 0
+    msg = []
+    while total < length:
+        data = conn.recv(min(length - total, 2048))
+        if data == '':
+            return data # return the blank string and let the calling routine handle the error
+        msg.append(data)
+        total += len(data)
+
+    return ''.join(msg)
+
+
+
+#########################################################################
+
+if __name__ == "__main__":
+    run()
