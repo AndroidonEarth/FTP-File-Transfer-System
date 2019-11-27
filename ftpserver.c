@@ -20,11 +20,12 @@ typedef enum { FALSE, TRUE } bool;   // bool type for C89/C99 compilation
 //typedef enum { SEND,  RECV } mode_t; // mode_t type to specify sendrecv() mode
 
 #define BUF_LEN 128
-//#define LG_BUF 4096
+/*
 #define CMD_OK  "OK"
 #define BAD_CMD "INVALID COMMAND"
 #define BAD_DIR "ERROR READING DIRECTORY"
 #define BAD_FIL "FILE NOT FOUND"
+*/
 
 /*
  * Declarations
@@ -32,8 +33,8 @@ typedef enum { FALSE, TRUE } bool;   // bool type for C89/C99 compilation
 int ctrlListen(char* port);
 int dataConnect(char* host, char* port);
 void handleRequest(int ctrlConn, char* host); 
-int getDir(char* buf);
-int getFile(char* buf, char *name);
+int getDir(char** buf);
+int getFile(char** buf, char *name);
 int sendAll(int conn, char* str, int len);
 void* getInAddr(struct sockaddr *client);
 void bye(int signum);
@@ -220,6 +221,7 @@ void handleRequest(int ctrlConn, char* host) {
     struct sockaddr_storage client;
     socklen_t clientSize;
 
+    // command and message variables
     char cmd[BUF_LEN];  // to hold the full command from the client
     char name[BUF_LEN]; // to hold a filename
     char* msg;
@@ -227,19 +229,27 @@ void handleRequest(int ctrlConn, char* host) {
     int len;
     char* token;
 
+    // response constant variables
+    const char CMD_OK[] = "OK";
+    const char BAD_CMD[] = "INVALID COMMAND";
+    const char BAD_DIR[] = "ERROR READING DIRECTORY";
+    const char BAD_FIL[] = "FILE NOT FOUND";
+
     // Get command
     memset(cmd, '\0', sizeof(cmd));
     if (recv(ctrlConn, cmd, sizeof(cmd)-1, 0) <= 0) {
         perror("ERROR, receiving command from client\n");
         return;
     }
+    printf("Command received from client: %s\n", cmd);
 
     // Parse command
     token = strtok(cmd, " ");
+    printf("Handling flag: %s\n", token);
     if (strcmp(token, "-l") == 0) { // get directory contents command
 
         // Try to get the directory contents
-        if ((len = getDir(msg)) == -1) {
+        if ((len = getDir(&msg)) == -1) {
             
             // error reading directory contents
             if (send(ctrlConn, BAD_DIR, sizeof(BAD_DIR)-1, 0) <= 0) {
@@ -256,7 +266,7 @@ void handleRequest(int ctrlConn, char* host) {
         strcpy(name, token);
 
         // Try to get the file contents
-        if ((len = getFile(msg, name)) == -1) {
+        if ((len = getFile(&msg, name)) == -1) {
 
             // could not find file to open
             if (send(ctrlConn, BAD_FIL, sizeof(BAD_FIL)-1, 0) <= 0) {
@@ -267,6 +277,7 @@ void handleRequest(int ctrlConn, char* host) {
         
         
     } else { // invalid command
+        printf("INVALID COMMAND, sending error to client\n");
         if (send(ctrlConn, BAD_CMD, sizeof(BAD_CMD)-1, 0) <= 0) { 
             perror("ERROR, INVALID COMMAND error not sent to client\n");
         }
@@ -274,10 +285,13 @@ void handleRequest(int ctrlConn, char* host) {
     }
 
     // command [and filename] good, send acknowledgment
+    printf("Command OK, sending acknowledgment to client\n");
     if (send(ctrlConn, CMD_OK, sizeof(CMD_OK)-1, 0) <= 0) {
         perror("ERROR, OK response not sent to client\n");
         return;
     }
+    // Server is too fast, give client a chance to setup the data connection
+    sleep(2);
 
     // Get the length of the message as a string
     memset(lenStr, '\0', sizeof(lenStr));
@@ -285,25 +299,29 @@ void handleRequest(int ctrlConn, char* host) {
 
     // Get the port number and open data connection with client host
     token = strtok(NULL, " ");
-    if ((dataConn = dataConnect(token, host)) == -1) { return; } // Error connecting
+    printf("Opening data connection with client: %s on port: %s\n", host, token);
+    if ((dataConn = dataConnect(host, token)) == -1) { return; } // Error connecting
+    printf("Data connection established!\n");
 
     // Send buffer length and then buffer contents.
+    printf("Sending data length to client: %s\n", lenStr);
     if (send(dataConn, lenStr, sizeof(lenStr)-1, 0) <= 0) {
         perror("ERROR, could not send message length, aborting\n");
         close(dataConn);
         return;
     }
+    printf("Sending data to client...\n");
     if (sendAll(dataConn, msg, len) < len) { 
         perror("WARNING, entire message not sent\n"); 
     }
+    printf("Transfer complete! Waiting for acknowledgment of receipt...\n");
 
-    /* TODO: definitely implement this wait for receipt to handle large files!
     // Get acknowledgment of receipt from client before closing
     memset(cmd, '\0', sizeof(cmd));
-    if (recv(dataCon, cmd, sizeof(cmd)-1, 0) <= 0) {
+    if (recv(ctrlConn, cmd, sizeof(cmd)-1, 0) <= 0) {
         perror("ERROR, getting acknowledgment back from client\n");
     }
-    */
+    printf("Acknowledgment of receipt received: %s\nClosing connection\n", cmd);
 
     close(dataConn);
     free(msg);
@@ -361,17 +379,18 @@ void* getInAddr(struct sockaddr* client) {
 // Pre :
 // Post:
 // Rtrn:
-int getDir(char* buf) {
+int getDir(char** buf) {
 
     // Opening and ready directory contents from official manpage
     // http://man7.org/linux/man-pages/man3/readdir.3.html
     DIR* dir;
     struct dirent* dirEnt;
     int i = 0;
-    int count = 0;
-    int size = 0;
-    char* files[BUF_LEN];
+    int count = 0; // number of file names
+    int size = 0; // total size of all filenames + newlines
+    char files[BUF_LEN][BUF_LEN]; // 2D array to hold file names before concatenation
 
+    printf("Opening directory to get contents...\n");
     if ((dir = opendir(".")) == NULL) { 
         perror("ERROR, opening current directory");
         return -1; 
@@ -380,6 +399,7 @@ int getDir(char* buf) {
     // Loop through the directory and get the names of the regular files.
     while ((dirEnt = readdir(dir)) != NULL) {
         if (dirEnt->d_type == DT_REG) {
+            memset(files[count], '\0', sizeof(files[count]));
             strcpy(files[count], dirEnt->d_name);
             size += strlen(files[i]);
             size++; // to account for the newlines
@@ -387,26 +407,28 @@ int getDir(char* buf) {
         }
     }
     closedir(dir);
+    printf("Size of directory contents: %d\n", size);
 
     // If there were no regular files in the directory just put a blank space
-    if (size == 0) { buf = " "; return 1; }
+    if (size == 0) { (*buf) = " "; return 1; }
     else {
         // Append all the file names as one long string
-        buf = malloc(sizeof(char) * (size+1)); 
+        (*buf) = malloc(sizeof(char) * (size+1)); 
         
         bool first = TRUE;
         for (i = 0; i < count; i++) {
             if (first) {
-                strcpy(buf, files[i]);
-                strcat(buf, "\n");
+                strcpy((*buf), files[i]);
+                strcat((*buf), "\n");
                 first = FALSE;
             } else {
-                strcat(buf, files[i]);
-                strcat(buf, "\n");
+                strcat((*buf), files[i]);
+                strcat((*buf), "\n");
             }
         }
-        buf[size+1] = '\0';
+        (*buf)[size+1] = '\0';
     }
+    printf("Directory contents obtained:\n%s", (*buf));
 
     return size; // return size of concatenated string
 }
@@ -418,7 +440,7 @@ int getDir(char* buf) {
 // Pre :
 // Post:
 // Rtrn:
-int getFile(char* buf, char *name) {
+int getFile(char** buf, char *name) {
 
     // Opening and reading files from official manpage
     // http://man7.org/linux/man-pages/man3/fopen.3.html
@@ -427,6 +449,7 @@ int getFile(char* buf, char *name) {
     FILE* file;
     long size;
 
+    printf("Attempting to open file: %s\n", name);
     if ((file = fopen(name, "r")) == NULL) {
         fprintf(stderr, "ERROR, could not open file %s\n", name);
         return -1;
@@ -439,15 +462,17 @@ int getFile(char* buf, char *name) {
         perror("ERROR, getting file size\n");
         return -1;
     }
+    printf("Size of file: %ld\n", size);
 
     // Get the file contents
-    buf = malloc(sizeof(char) * (size+1));
-    if (fread(buf, sizeof(char), size, file) < size || ferror(file)) {
+    (*buf) = malloc(sizeof(char) * (size+1));
+    if (fread((*buf), sizeof(char), size, file) < size || ferror(file)) {
         perror("ERROR, reading file contents to buffer\n");
         return -1;
     } else {
-        buf[size+1] = '\0';
+        (*buf)[size+1] = '\0';
     }
+    printf("Contents of file obtained.\n");
 
     return size;
 }

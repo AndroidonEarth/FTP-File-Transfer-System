@@ -9,6 +9,8 @@
 
 import sys
 import re
+import os.path
+from os import path
 from socket import *
 
 # Name: run()
@@ -49,32 +51,31 @@ def run():
     if int(ctrlPort) < 50000 or int(dataPort) < 50000:
         print("WARNING, recommended to use port numbers above 50000")
 
+    # connect to server
     print("Welcome to ftpclient!")
-    # TODO: flesh out stubs
-    conn = initiateContact(host, port)
-    makeRequest()
-    receiveData()
+    conn = initContact(host, ctrlPort)
 
-    # TODO: move to initiateContact()
-    print("Attempting to connect to host: {} at port: {}".format(host, ctrlPort))
-    ctrlConnect(host, ctrlPort)
-    print("Connection successful! Sending command...")
+    # send request
+    req = ' '.join(sys.argv[3:])
+    res = makeRequest(req, conn)
 
-    """
-    sock = setup()                    # setup the socket connection
-    
-    # a new connection is established
-    conn, addr = sock.accept()
+    # handle response
+    if res == 'OK':
+        data = recvData(conn, dataPort)
+    else:
+        conn.close()
+        sys.exit(1)
 
-    # handshake with client to receive client's name 
-    client = conn.recv(10) # max 10 chars for username
-    conn.send(user)
-    print(client + " has joined the chatroom!")
+    # handle received data
+    if flag == '-l':
+        print("Directory contents from server:")
+        print(data)
+    else:
+        saveData(data, filename)
 
-    chat(conn, user, client) # begin chat loop
-    """
+    # exit
     conn.close()
-
+    
 
 # Name: dataListen()
 # Desc: Sets up a TCP socket on the port num specified on the command line and begins listening.
@@ -108,7 +109,8 @@ def dataListen(port):
 
 # Name: ctrlConnect()
 # Desc:
-# Arg :
+# Arg1:
+# Arg2:
 # Pre :
 # Post:
 # Rtrn:
@@ -136,62 +138,39 @@ def ctrlConnect(host, port):
         sys.exit("ERROR, could not connect to host: {} at port: {}".format(host, port))
     return sock
 
-"""
-# Name: getUser()
-# Desc: Prompts for and gets username, using regex matching for validation of format.
-# Pre : None.
-# Post: A correctly formatted and validated username is returned.
-def getUser():
+# Name: initContact()
+# Desc:
+# Arg1:
+# Arg2:
+# Pre :
+# Post:
+# Rtrn:
+def initContact(host, port):
+    
+    print("Attempting to connect to host: {} at port: {}".format(host, port))
+    sock = ctrlConnect(host, port)
+    print("Connection successful!")
+    return sock
 
-    # python regex info from official docs
-    # https://docs.python.org/2/library/re.html#module-contents
-    user = raw_input("Please enter a one word username, up to 10 characters: ")
-    regex = re.compile("^[A-Za-z]{1,10}$")
-    while not regex.match(user):
-        print("Invalid username format")
-        user = raw_input("Please enter a one word username, up to 10 characters: ")
-    return user
+# Name: makeRequest()
+# Desc:
+# Arg :
+# Pre :
+# Post:
+# Rtrn:
+def makeRequest(req, conn):
 
+    print("Sending command to server: {}".format(req))
+    conn.send(req)
+    res = conn.recv(128)
 
-# Name: chat()
-# Desc: The main chat loop where the user and client take turns sending messages
-#           back and forth with each other until the connection is terminated.
-# Arg1: conn - the connection that is established with the client when the socket accepted
-#           the connection.
-# Arg2: user - the username of the server user.
-# Arg3: client - the username of the client user.
-# Pre : A socket accepts a connection with a client and a handshake occurs
-#           to retrieve the client username.
-# Post: The client or server terminates the connection and the chat ends.
-def chat(conn, user, client):
+    if res == '':
+        sys.exit("ERROR, receiving response back from server")
+    else:
+        print("Response from server: {}".format(res))
 
-    bufLen = MSGLEN - len(user) - 2
+    return res
 
-    while True:
-        try:
-            msg = conn.recv(MSGLEN)
-        except error as m:
-            print("ERROR: could not receive message from client... Exiting chatroom.")
-            break
-        if not msg or '\quit' in msg.strip().lower():
-            print(client + " has left the chatroom.")
-            break
-        else:
-            print msg
-
-        buf = (raw_input("{}> ".format(user)))[:bufLen]
-        msg = "{}> {}".format(user, buf)
-        
-        # even if quitting send the \quit message
-        try:
-            sent = sendMsg(conn, msg)
-        except error as m:
-            print("ERROR: could not sent message to client... Exiting chatoom.")
-            break
-        if buf.strip().lower() == '\quit':
-            print("You have left the chatroom.")
-            break
-"""
 
 # Name: recvAll()
 # Desc: Sends the specified message to the connection up to the global max message length.
@@ -199,6 +178,7 @@ def chat(conn, user, client):
 # Arg2: msg - the message to send.
 # Pre : A connection is previously set up and the message to send is obtained from the user.
 # Post: The message is sent to the client through the connection.
+# Rtrn:
 def recvAll(conn, length):
 
     # python socket programming info from official docs
@@ -215,7 +195,70 @@ def recvAll(conn, length):
 
     return ''.join(msg)
 
+# Name: recvData()
+# Desc:
+# Arg1:
+# Arg2:
+# Pre :
+# Post:
+# Rtrn:
+def recvData(ctrlConn, port):
 
+    # setup and receive data connection
+    print("Setting up data connection...")
+    sock = dataListen(port)
+    dataConn, addr = sock.accept()
+    print("Data connection established! Receiving data...")
+
+    # receive data length first
+    length = int(dataConn.recv(128).replace('\x00',''))
+    if length == '':
+        sys.exit("ERROR, receiving data length from server")
+    print("Size of incoming data: {}".format(length))
+
+    # then data
+    print("Receiving data...")
+    data = recvAll(dataConn, length)
+    if data == '' or len(data) < length:
+        sys.exit("ERROR, receiving data from server")
+
+    print("Transfer complete!")
+    
+    # send acknowledgment of receipt to server on control connection
+    ctrlConn.send('OK')
+    print("Acknowledgment OK sent to server")
+    ctrlConn.close()
+
+    return data
+
+# Name: saveData()
+# Desc:
+# Arg1:
+# Arg2:
+# Pre :
+# Post:
+def saveData(data, filename):
+
+    # Using python os.path from official documentation
+    # https://docs.python.org/2/library/os.path.html
+
+    # Using python built-in file handling functions from official docs
+    # https://docs.python.org/2/library/functions.html#open
+    print("Saving file: {}".format(filename))
+
+    # determine if the file alraedy exists
+    if path.exists(filename):
+        print("Filename already exists... generating new filename")
+        # generate a new unique filename (filename with "~1~", "~2~", etc. appended to end
+        i = 1
+        while path.exists("{}~{}~".format(filename, i)): i += 1
+        filename = "{}~{}~".format(filename, i)
+
+    fil = open(filename, "w+")
+    fil.write(data)
+    fil.close()
+    
+    print("New file created: {}".format(filename))
 
 #########################################################################
 
