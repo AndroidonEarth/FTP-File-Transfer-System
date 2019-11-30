@@ -1,10 +1,13 @@
 #!/usr/bin/env python2
 
 ##
-## Program name: ftpclient
-## Author: Andrew Swaim
+## Name: ftpclient
+## Auth: Andrew Swaim
 ## Date: November 2019
-## Description: 
+## Desc: FTP client that sends a command to get the directory contents or file contents
+##       specified on the command line. Command will be sent to the FTP server on a control
+##       connection, then if validated a second TCP data connection will be opened for the
+##       server to send the data to the client.
 ##
 
 import sys
@@ -21,7 +24,7 @@ def run():
     
     # Validate minimum args
     if len(sys.argv) < 5 or len(sys.argv) > 6:
-        sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2")
+        sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2\n")
 
     # Capture first args
     host = sys.argv[1]
@@ -35,24 +38,24 @@ def run():
         if flag == '-l':
             dataPort = sys.argv[4]
         else:
-            sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2")
+            sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2\n")
     elif len(sys.argv) == 6:
         if flag == '-g':
             filename = sys.argv[4]
             dataPort = sys.argv[5]
         else:
-            sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2")
+            sys.exit("Usage: ftpclient host port1 [-l] [-g filename] port2\n")
 
     # Validate port numbers
     if int(ctrlPort) < 1024 or int(ctrlPort) > 65535:
-        sys.exit("ERROR, invalid port: {}".format(ctrlPort))
+        sys.exit("ERROR, invalid port: {}\n".format(ctrlPort))
     if int(dataPort) < 1024 or int(dataPort) > 65535:
-        sys.exit("ERROR, invalid port: {}".format(dataPort))
+        sys.exit("ERROR, invalid port: {}\n".format(dataPort))
     if int(ctrlPort) < 50000 or int(dataPort) < 50000:
-        print("WARNING, recommended to use port numbers above 50000")
+        print("WARNING, recommended to use port numbers above 50000\n")
 
     # connect to server
-    print("Welcome to ftpclient!")
+    print("\nWelcome to ftpclient!\n")
     conn = initContact(host, ctrlPort)
 
     # send request
@@ -68,18 +71,20 @@ def run():
 
     # handle received data
     if flag == '-l':
-        print("Directory contents from server:")
+        print("Directory contents from server:\n")
         print(data)
     else:
         saveData(data, filename)
 
     # exit
+    print("Closing control connection and exiting... Goodbye!\n")
     conn.close()
     
 
 # Name: dataListen()
 # Desc: Sets up a TCP socket on the port num specified on the command line and begins listening.
-# Rtrn: The file descriptor for the opened and listening connection
+# Arg : port - the port number to try to bind and listen on.
+# Rtrn: The file descriptor for the opened and listening connection.
 # Pre : A port number was specified on the command line when the application was started.
 # Post: a TCP socket is created on the specified port and begins listening.
 def dataListen(port):
@@ -104,16 +109,16 @@ def dataListen(port):
             continue
         break
     if sock is None:
-        sys.exit("ERROR, could not open socket at port: {}".format(port))
+        sys.exit("ERROR, could not open socket at port: {}\n".format(port))
     return sock
 
 # Name: ctrlConnect()
-# Desc:
-# Arg1:
-# Arg2:
-# Pre :
-# Post:
-# Rtrn:
+# Desc: Tries to establish a control connection with the specified host on the port number specified.
+# Arg1: host - the host name or IP to try to connect to.
+# Arg2: port - the port number that the host is expected to be listening on.
+# Pre : The host name/IP and port number were specified on the command line during startup.
+# Post: The host is successfully connected to.
+# Rtrn: The socket file descriptor for the connected control connection.
 def ctrlConnect(host, port):
 
     # python socket programming info from official docs
@@ -135,50 +140,51 @@ def ctrlConnect(host, port):
             continue
         break
     if sock is None:
-        sys.exit("ERROR, could not connect to host: {} at port: {}".format(host, port))
+        sys.exit("ERROR, could not connect to host: {} at port: {}\n".format(host, port))
     return sock
 
 # Name: initContact()
-# Desc:
-# Arg1:
-# Arg2:
-# Pre :
-# Post:
-# Rtrn:
+# Desc: Tries to establish a control connection with the specified host on the port number specified.
+# Arg1: host - the host name or IP to try to connect to.
+# Arg2: port - the port number that the host is expected to be listening on.
+# Pre : The host name/IP and port number were specified on the command line during startup.
+# Post: The host is successfully connected to.
+# Rtrn: The socket file descriptor for the connected control connection.
 def initContact(host, port):
     
-    print("Attempting to connect to host: {} at port: {}".format(host, port))
+    print("Attempting to connect to host: {} at port: {}\n".format(host, port))
     sock = ctrlConnect(host, port)
-    print("Connection successful!")
+    print("Connection successful!\n")
     return sock
 
 # Name: makeRequest()
-# Desc:
-# Arg :
-# Pre :
-# Post:
-# Rtrn:
+# Desc: Sends a command request to the server on the provided connection.
+# Arg1: req - the command request to send.
+# Arg2: conn - the control connection of the server to send the request on.
+# Pre : A control connection is established with the server and the request to send is obtained on the command line.
+# Post: The request is sent and a response is received from the server.
+# Rtrn: The response from the server.
 def makeRequest(req, conn):
 
-    print("Sending command to server: {}".format(req))
+    print("Sending command to server: {}\n".format(req))
     conn.send(req)
     res = conn.recv(128)
 
     if res == '':
-        sys.exit("ERROR, receiving response back from server")
+        sys.exit("ERROR, receiving response back from server\n")
     else:
-        print("Response from server: {}".format(res))
+        print("Response from server: {}\n".format(res))
 
     return res
 
 
 # Name: recvAll()
-# Desc: Sends the specified message to the connection up to the global max message length.
-# Arg1: conn - the data connection to send data to.
-# Arg2: msg - the message to send.
-# Pre : A connection is previously set up and the message to send is obtained from the user.
-# Post: The message is sent to the client through the connection.
-# Rtrn:
+# Desc: Receives a message from the server up to the specified length.
+# Arg1: conn - the data connection to receive the data on.
+# Arg2: length - the expected length of the message to receive.
+# Pre : A data connection is previously set up and the length to receive is obtained from the server.
+# Post: The message is received from the server.
+# Rtrn: The received message from the server.
 def recvAll(conn, length):
 
     # python socket programming info from official docs
@@ -187,56 +193,59 @@ def recvAll(conn, length):
     total = 0
     msg = []
     while total < length:
-        data = conn.recv(min(length - total, 2048))
+        data = conn.recv(length - total)
         if data == '':
             return data # return the blank string and let the calling routine handle the error
         msg.append(data)
         total += len(data)
 
-    return ''.join(msg)
+    msgStr = ''.join(msg)
+
+    return msgStr
 
 # Name: recvData()
-# Desc:
-# Arg1:
-# Arg2:
-# Pre :
-# Post:
-# Rtrn:
+# Desc: Opens a data connection with the server and receives the data.
+# Arg1: ctrlConn - the control connection previously setup
+# Arg2: port - the port number to open the data connection on
+# Pre : The control connection was previously setup and the data connection port was specified on the command line.
+# Post: A data connection is opened with the server, the data is received, acknowledgment is sent and the data connection is closed.
+# Rtrn: The data received from the server.
 def recvData(ctrlConn, port):
 
     # setup and receive data connection
-    print("Setting up data connection...")
+    print("Setting up data connection on port: {}\n".format(port))
     sock = dataListen(port)
     dataConn, addr = sock.accept()
-    print("Data connection established! Receiving data...")
+    print("Data connection established!\n")
 
     # receive data length first
-    length = int(dataConn.recv(128).replace('\x00',''))
-    if length == '':
-        sys.exit("ERROR, receiving data length from server")
-    print("Size of incoming data: {}".format(length))
+    lstr = str(dataConn.recv(128)).split("\n")[0] # everything up to first newline
+    if lstr == '':
+        sys.exit("ERROR, receiving data length from server\n")
+    print("Size of incoming data: {}\n".format(lstr))
+    length = int(lstr)
 
     # then data
-    print("Receiving data...")
+    print("Receiving data from server...\n")
     data = recvAll(dataConn, length)
     if data == '' or len(data) < length:
-        sys.exit("ERROR, receiving data from server")
+        sys.exit("ERROR, receiving data from server\n")
 
-    print("Transfer complete!")
+    print("Transfer complete!\n")
     
     # send acknowledgment of receipt to server on control connection
     ctrlConn.send('OK')
-    print("Acknowledgment OK sent to server")
+    print("Acknowledgment 'OK' sent to server on control connection\n")
     ctrlConn.close()
 
     return data
 
 # Name: saveData()
-# Desc:
-# Arg1:
-# Arg2:
-# Pre :
-# Post:
+# Desc: Used for saving a file with the data received from the server, handling duplicated filenames if necessary
+# Arg1: data - the data received from the server.
+# Arg2: filename - the name of the file to try to save.
+# Pre : The data was received from the server and the filename was specified on the command line.
+# Post: A file containing the data was created and saved, handling duplicate filenames if necessary.
 def saveData(data, filename):
 
     # Using python os.path from official documentation
@@ -244,11 +253,11 @@ def saveData(data, filename):
 
     # Using python built-in file handling functions from official docs
     # https://docs.python.org/2/library/functions.html#open
-    print("Saving file: {}".format(filename))
+    print("Saving file: {}\n".format(filename))
 
     # determine if the file alraedy exists
     if path.exists(filename):
-        print("Filename already exists... generating new filename")
+        print("Filename already exists... generating new filename\n")
         # generate a new unique filename (filename with "~1~", "~2~", etc. appended to end
         i = 1
         while path.exists("{}~{}~".format(filename, i)): i += 1
@@ -258,7 +267,7 @@ def saveData(data, filename):
     fil.write(data)
     fil.close()
     
-    print("New file created: {}".format(filename))
+    print("New file created: {}\n".format(filename))
 
 #########################################################################
 
